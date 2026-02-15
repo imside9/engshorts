@@ -94,6 +94,7 @@ const state = {
   sessionLimit: null,
   selectedModeLabel: "무한모드",
   sessionActive: false,
+  dataReady: false,
 };
 
 class SoundEngine {
@@ -165,11 +166,17 @@ init();
 async function init() {
   wireControls();
   wireGestureControls();
+  setModeButtonsEnabled(false);
+  setModeSubtitle("단어 데이터를 불러오는 중...");
   state.words = await loadWords();
   if (state.words.length < 8) {
     dom.prompt.textContent = "CSV 데이터가 부족해.";
+    setModeSubtitle("데이터 로딩 실패. 새로고침 후 다시 시도해 주세요.");
     return;
   }
+  state.dataReady = true;
+  setModeButtonsEnabled(true);
+  setModeSubtitle("몇 문제를 풀지 선택하세요.");
   applyComboTheme(0, { burst: false });
   openModeOverlay();
 }
@@ -187,6 +194,7 @@ function wireControls() {
 
   dom.modeButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
+      if (!state.dataReady) return;
       const raw = btn.dataset.limit;
       const limit = raw === "inf" ? null : Number(raw);
       startSession(limit, btn.textContent?.trim() || "모드");
@@ -301,9 +309,14 @@ function openModeOverlay() {
 }
 
 function startSession(limit, label) {
+  if (!state.dataReady || state.words.length < 8) {
+    setModeSubtitle("데이터 로딩이 아직 완료되지 않았습니다.");
+    return;
+  }
   state.sessionLimit = limit;
   state.selectedModeLabel = label;
   state.sessionActive = true;
+  state.locked = false;
   state.cardCount = 0;
   state.streak = 0;
   state.peakCombo = 0;
@@ -421,7 +434,18 @@ function goNextCard(direction = "up") {
   }
 
   state.isReviewMode = false;
-  const question = buildQuestion();
+  let question = null;
+  try {
+    question = buildQuestion();
+  } catch (_err) {
+    state.locked = false;
+    state.sessionActive = false;
+    dom.prompt.textContent = "문제를 준비하는 중 오류가 발생했습니다.";
+    dom.caption.textContent = "새로고침 후 다시 시도해 주세요.";
+    openModeOverlay();
+    setModeSubtitle("로딩 오류가 발생했습니다. 다시 시작해 주세요.");
+    return;
+  }
   state.question = question;
   state.feed.push(question);
   if (state.feed.length > 200) state.feed.shift();
@@ -608,6 +632,11 @@ function handleTimeout() {
 }
 
 function finishLiveCard(correct, q) {
+  if (!q) {
+    state.locked = false;
+    goNextCard("up");
+    return;
+  }
   const prevTier = state.comboTier;
   const elapsed = performance.now() - state.lastCardStartedAt;
   state.responseMs.push(elapsed);
@@ -657,6 +686,19 @@ function finishLiveCard(correct, q) {
     state.locked = false;
     goNextCard("up");
   }, 620);
+}
+
+function setModeButtonsEnabled(enabled) {
+  dom.modeButtons.forEach((btn) => {
+    btn.disabled = !enabled;
+    btn.setAttribute("aria-disabled", String(!enabled));
+  });
+}
+
+function setModeSubtitle(text) {
+  const el = document.querySelector(".hero-subtitle");
+  if (!el) return;
+  el.textContent = text;
 }
 
 function showComboFeedback(streak, tier, tierUp) {

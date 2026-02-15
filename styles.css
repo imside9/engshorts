@@ -320,6 +320,11 @@ body {
   cursor: pointer;
 }
 
+.mode-btn:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
 .mode-btn.recommended {
   border-color: rgba(142, 255, 193, 0.68);
   box-shadow: 0 0 18px rgba(142, 255, 193, 0.24);
