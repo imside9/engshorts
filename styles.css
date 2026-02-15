@@ -121,6 +121,8 @@ body {
   backdrop-filter: blur(4px);
   display: flex;
   flex-direction: column;
+  will-change: transform, opacity;
+  touch-action: none;
 }
 
 .type-label {
@@ -164,6 +166,14 @@ body {
   margin-top: auto;
   font-size: 13px;
   color: var(--muted);
+}
+
+.reward-reason {
+  margin: 6px 0 0;
+  min-height: 18px;
+  font-size: 12px;
+  color: rgba(255, 242, 175, 0.95);
+  letter-spacing: 0.02em;
 }
 
 .side-ui {
@@ -358,6 +368,11 @@ body {
 .reward-sub {
   margin-top: 10px;
   color: var(--muted);
+}
+
+.reward-why {
+  color: #ffe788;
+  font-weight: 600;
 }
 
 .slide-out-up {

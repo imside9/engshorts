@@ -6,6 +6,15 @@ const RECENT_VIDEO_LIMIT = 5;
 const REWARD_COOLDOWN = 5;
 const SWIPE_MIN_Y = 64;
 const SWIPE_AXIS_RATIO = 1.2;
+const SWIPE_COMMIT_RATIO = 0.22;
+const SWIPE_VELOCITY_THRESHOLD = 0.65;
+const SWIPE_MAX_DRAG = 180;
+const SWIPE_ROTATE_MAX = 4;
+const SWIPE_RESTORE_MS = 220;
+const REWARD_XP_THRESHOLD = 10;
+const REWARD_CLIP_MIN_MS = 5000;
+const REWARD_CLIP_MAX_MS = 8000;
+const HARD_TYPES = new Set(["OX", "FILL_BLANK", "SPEED_PICK"]);
 
 const VIDEO_SOURCES = Array.from({ length: 18 }, (_, i) => `./assets/video/loop${String(i + 1).padStart(2, "0")}.mp4`);
 
@@ -42,6 +51,7 @@ const dom = {
   options: document.getElementById("options"),
   typeLabel: document.getElementById("typeLabel"),
   caption: document.getElementById("caption"),
+  rewardReason: document.getElementById("rewardReason"),
   timerBar: document.getElementById("timerBar"),
   streakValue: document.getElementById("streakValue"),
   speedValue: document.getElementById("speedValue"),
@@ -63,6 +73,7 @@ const state = {
   words: [],
   cardCount: 0,
   streak: 0,
+  challengeXp: 0,
   rewardCount: 0,
   responseMs: [],
   lastCardStartedAt: 0,
@@ -73,6 +84,7 @@ const state = {
   recentBgIds: [],
   recentTypes: [],
   recentVideoSrcs: [],
+  rewardVault: [],
   seenWordType: new Set(),
   nextRewardTarget: randomInt(3, 5),
   lastRewardCardAt: -100,
@@ -84,7 +96,19 @@ const state = {
   navLockUntil: 0,
   wheelDeltaY: 0,
   wheelResetTimer: null,
-  gesture: { active: false, startX: 0, startY: 0, pointerId: null },
+  gesture: {
+    active: false,
+    dragging: false,
+    startX: 0,
+    startY: 0,
+    currentY: 0,
+    lastY: 0,
+    lastTs: 0,
+    velocityY: 0,
+    pointerId: null,
+  },
+  pendingRewardTrigger: null,
+  lastRewardReason: "",
   sessionLimit: null,
   selectedModeLabel: "무한모드",
   sessionActive: false,
@@ -171,18 +195,44 @@ function wireControls() {
 
 function wireGestureControls() {
   dom.app.addEventListener("pointerdown", onPointerDown);
+  dom.app.addEventListener("pointermove", onPointerMove);
   dom.app.addEventListener("pointerup", onPointerUp);
   dom.app.addEventListener("pointercancel", clearGesture);
   dom.app.addEventListener("wheel", onWheel, { passive: false });
 }
 
 function onPointerDown(e) {
-  if (state.locked) return;
+  if (state.locked || !state.sessionActive) return;
   if (e.target.closest(".opt-btn") || e.target.closest(".sound-btn") || e.target.closest(".mode-btn")) return;
   state.gesture.active = true;
+  state.gesture.dragging = false;
   state.gesture.startX = e.clientX;
   state.gesture.startY = e.clientY;
+  state.gesture.currentY = e.clientY;
+  state.gesture.lastY = e.clientY;
+  state.gesture.lastTs = e.timeStamp || performance.now();
+  state.gesture.velocityY = 0;
   state.gesture.pointerId = e.pointerId;
+}
+
+function onPointerMove(e) {
+  if (!state.gesture.active || state.gesture.pointerId !== e.pointerId) return;
+  if (state.locked || !state.sessionActive) return;
+  const dx = e.clientX - state.gesture.startX;
+  const dy = e.clientY - state.gesture.startY;
+  const mostlyVertical = Math.abs(dy) > Math.abs(dx) * 0.7;
+  const movedEnough = Math.abs(dy) > 10;
+  if (mostlyVertical && movedEnough) state.gesture.dragging = true;
+  if (!state.gesture.dragging) return;
+
+  const now = e.timeStamp || performance.now();
+  const dt = Math.max(1, now - state.gesture.lastTs);
+  state.gesture.velocityY = (e.clientY - state.gesture.lastY) / dt;
+  state.gesture.currentY = e.clientY;
+  state.gesture.lastY = e.clientY;
+  state.gesture.lastTs = now;
+
+  applyDragTransform(dy);
 }
 
 function onPointerUp(e) {
@@ -190,15 +240,27 @@ function onPointerUp(e) {
   if (state.gesture.pointerId !== e.pointerId) return;
   const dx = e.clientX - state.gesture.startX;
   const dy = e.clientY - state.gesture.startY;
+  const vy = state.gesture.velocityY;
+  const cardHeight = Math.max(1, dom.card.getBoundingClientRect().height);
+  const commitDist = Math.max(SWIPE_MIN_Y, cardHeight * SWIPE_COMMIT_RATIO);
+  const distEnough = Math.abs(dy) >= commitDist;
+  const velocityEnough = Math.abs(vy) >= SWIPE_VELOCITY_THRESHOLD;
+  const axisOk = Math.abs(dy) > Math.abs(dx) * SWIPE_AXIS_RATIO;
+  const shouldCommit = state.gesture.dragging && axisOk && (distEnough || velocityEnough);
   clearGesture();
-  if (Math.abs(dy) < SWIPE_MIN_Y) return;
-  if (Math.abs(dy) <= Math.abs(dx) * SWIPE_AXIS_RATIO) return;
+  if (!shouldCommit) {
+    animateRestoreFromDrag();
+    return;
+  }
+  resetCardTransform();
   handleSwipeNavigate(dy < 0 ? "up" : "down");
 }
 
 function clearGesture() {
   state.gesture.active = false;
+  state.gesture.dragging = false;
   state.gesture.pointerId = null;
+  state.gesture.velocityY = 0;
 }
 
 function onWheel(e) {
@@ -237,6 +299,7 @@ function startSession(limit, label) {
   state.sessionActive = true;
   state.cardCount = 0;
   state.streak = 0;
+  state.challengeXp = 0;
   state.rewardCount = 0;
   state.responseMs = [];
   state.feed = [];
@@ -244,9 +307,13 @@ function startSession(limit, label) {
   state.isReviewMode = false;
   state.recentWordIds = [];
   state.recentTypes = [];
+  state.rewardVault = [];
   state.seenWordType = new Set();
   state.nextRewardTarget = randomInt(3, 5);
   state.lastRewardCardAt = -100;
+  state.pendingRewardTrigger = null;
+  state.lastRewardReason = "";
+  if (dom.rewardReason) dom.rewardReason.textContent = "";
   dom.modeOverlay.classList.add("hidden");
   dom.resultOverlay.classList.add("hidden");
   updateHud();
@@ -323,6 +390,7 @@ function splitCsvLine(line) {
 
 function goNextCard(direction = "up") {
   if (!state.sessionActive) return;
+  resetCardTransform();
   resetTimer();
   state.locked = false;
 
@@ -336,8 +404,9 @@ function goNextCard(direction = "up") {
   }
 
   state.isReviewMode = false;
-  if (shouldTriggerReward()) {
-    renderRewardCard(direction);
+  const rewardTrigger = shouldTriggerReward();
+  if (rewardTrigger) {
+    renderRewardCard(direction, rewardTrigger);
     return;
   }
 
@@ -351,6 +420,7 @@ function goNextCard(direction = "up") {
 }
 
 function goPrevCard(direction = "down") {
+  resetCardTransform();
   if (state.feedIndex <= 0) {
     pulseNoHistory();
     return;
@@ -367,27 +437,39 @@ function shouldTriggerReward() {
   const cardsSinceReward = state.cardCount - state.lastRewardCardAt;
   if (cardsSinceReward < REWARD_COOLDOWN) return false;
   const byStreak = state.streak >= state.nextRewardTarget;
+  const byChallenge = state.challengeXp >= REWARD_XP_THRESHOLD;
   const guaranteed = state.cardCount > 0 && state.cardCount % 10 === 0;
-  return byStreak || guaranteed;
+  if (!byStreak && !byChallenge && !guaranteed) return null;
+  if (byChallenge && byStreak) return { reason: "Hard + combo clear", key: "challenge_combo" };
+  if (byChallenge) return { reason: "Hard clear chain", key: "challenge" };
+  if (byStreak) return { reason: "Combo streak reward", key: "streak" };
+  return { reason: "Milestone reward", key: "milestone" };
 }
 
-function renderRewardCard(direction) {
+function renderRewardCard(direction, trigger = null) {
+  const chosenTrigger = trigger || { reason: "Reward unlocked", key: "fallback" };
   state.rewardCount += 1;
   state.lastRewardCardAt = state.cardCount;
+  state.challengeXp = 0;
   state.nextRewardTarget = state.streak + randomInt(3, 5);
+  state.pendingRewardTrigger = chosenTrigger;
+  state.lastRewardReason = chosenTrigger.reason;
   sound.play("SFX_REWARD");
   applyVisualBackground(true);
+  const clip = unlockRewardClip();
+  const durationMs = randomInt(REWARD_CLIP_MIN_MS, REWARD_CLIP_MAX_MS);
   dom.typeLabel.textContent = typeLabels.REWARD;
-  dom.prompt.innerHTML = `<div class="reward-card"><div class="reward-main">${state.streak}연속 성공!</div><div class="reward-sub">${pickOne(rewardMessages)}</div></div>`;
+  dom.prompt.innerHTML = `<div class="reward-card"><div class="reward-main">${state.streak}연속 성공!</div><div class="reward-sub">${pickOne(rewardMessages)}</div><div class="reward-sub reward-why">Unlocked: ${clip.label}</div></div>`;
   dom.options.innerHTML = "";
-  dom.caption.textContent = "보상 타임! 텐션 유지해.";
+  dom.caption.textContent = `보상 사유: ${chosenTrigger.reason}`;
+  if (dom.rewardReason) dom.rewardReason.textContent = `${chosenTrigger.reason} · ${Math.round(durationMs / 1000)}s clip`;
   updateHud();
   animateIn(direction);
   state.locked = true;
   window.setTimeout(() => {
     state.locked = false;
     goNextCard("up");
-  }, 1500);
+  }, durationMs);
 }
 
 function buildQuestion() {
@@ -559,12 +641,14 @@ function finishLiveCard(correct, q, sfx) {
   sound.play(sfx);
 
   if (correct) {
+    state.challengeXp += scoreChallenge(q, elapsed);
     state.streak += q.bonusMultiplier === 2 ? 2 : 1;
     dom.card.classList.add("correct");
     showComboFeedback(state.streak);
     spawnParticles();
   } else {
     state.streak = 0;
+    state.challengeXp = Math.max(0, state.challengeXp - 1);
     dom.card.classList.add("wrong");
     showMissFeedback();
   }
@@ -643,6 +727,7 @@ function pulseNoHistory() {
 function updateHud() {
   dom.streakValue.textContent = String(state.streak);
   dom.rewardValue.textContent = String(state.rewardCount);
+  if (dom.rewardReason && !state.locked) dom.rewardReason.textContent = "";
   const max = state.sessionLimit == null ? "∞" : String(state.sessionLimit);
   dom.progressLabel.textContent = `${state.cardCount} / ${max}`;
   const avg = state.responseMs.length
@@ -792,15 +877,57 @@ function buildBackgrounds() {
 }
 
 function animateIn(direction = "up") {
+  resetCardTransform();
   dom.card.classList.remove("slide-in-up", "slide-in-down", "slide-out-up", "slide-out-down");
   dom.card.classList.add(direction === "down" ? "slide-in-down" : "slide-in-up");
   window.setTimeout(() => dom.card.classList.remove("slide-in-up", "slide-in-down"), 280);
 }
 
 function animateOut(direction = "up") {
+  resetCardTransform();
   dom.card.classList.remove("slide-in-up", "slide-in-down", "slide-out-up", "slide-out-down");
   dom.card.classList.add(direction === "down" ? "slide-out-down" : "slide-out-up");
   window.setTimeout(() => dom.card.classList.remove("slide-out-up", "slide-out-down"), 240);
+}
+
+function scoreChallenge(question, elapsedMs) {
+  let xp = 1;
+  if (HARD_TYPES.has(question.type)) xp += 2;
+  if (question.bonusMultiplier === 2) xp += 1;
+  if (elapsedMs <= question.timeLimitMs * 0.55) xp += 1;
+  return xp;
+}
+
+function unlockRewardClip() {
+  const unopened = VIDEO_SOURCES.filter((src) => !state.rewardVault.includes(src));
+  const chosen = unopened.length ? pickOne(unopened) : pickOne(VIDEO_SOURCES);
+  if (chosen && !state.rewardVault.includes(chosen)) state.rewardVault.push(chosen);
+  const idx = Math.max(1, state.rewardVault.length);
+  return { src: chosen, label: `Cat Clip #${idx}` };
+}
+
+function applyDragTransform(rawDy) {
+  const dy = Math.max(-SWIPE_MAX_DRAG, Math.min(SWIPE_MAX_DRAG, rawDy));
+  const ratio = Math.max(-1, Math.min(1, dy / SWIPE_MAX_DRAG));
+  const rotate = ratio * SWIPE_ROTATE_MAX;
+  dom.card.style.transition = "none";
+  dom.card.style.transform = `translate3d(0, ${dy}px, 0) rotate(${rotate}deg)`;
+  dom.card.style.opacity = String(1 - Math.abs(ratio) * 0.16);
+}
+
+function animateRestoreFromDrag() {
+  dom.card.style.transition = `transform ${SWIPE_RESTORE_MS}ms cubic-bezier(0.2, 0.9, 0.3, 1), opacity ${SWIPE_RESTORE_MS}ms ease`;
+  dom.card.style.transform = "translate3d(0, 0, 0) rotate(0deg)";
+  dom.card.style.opacity = "1";
+  window.setTimeout(() => {
+    dom.card.style.transition = "";
+  }, SWIPE_RESTORE_MS + 20);
+}
+
+function resetCardTransform() {
+  dom.card.style.transition = "";
+  dom.card.style.transform = "";
+  dom.card.style.opacity = "";
 }
 
 function trimQueue(arr, limit) {

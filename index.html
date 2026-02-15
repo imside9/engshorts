@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>숏폼 영어</title>
+    <title>WordSwipe English</title>
+    <link rel="icon" href="data:," />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -17,46 +18,47 @@
         <div class="timer-track">
           <div id="timerBar" class="timer-bar"></div>
         </div>
-        <div id="progressLabel" class="progress-label">0 / ∞</div>
+        <div id="progressLabel" class="progress-label">0 / --</div>
       </header>
 
       <aside class="side-ui" aria-label="상태">
-        <div class="side-item"><span class="icon">연</span><span id="streakValue">0</span></div>
-        <div class="side-item"><span class="icon">속</span><span id="speedValue">0.00s</span></div>
-        <div class="side-item"><span class="icon">보</span><span id="rewardValue">0</span></div>
-        <button id="soundToggle" class="sound-btn" type="button">사운드 끔</button>
+        <div class="side-item"><span class="icon">S</span><span id="streakValue">0</span></div>
+        <div class="side-item"><span class="icon">T</span><span id="speedValue">0.00s</span></div>
+        <div class="side-item"><span class="icon">R</span><span id="rewardValue">0</span></div>
+        <button id="soundToggle" class="sound-btn" type="button">사운드 OFF</button>
       </aside>
 
       <section id="card" class="card">
         <p id="typeLabel" class="type-label">유형</p>
         <h1 id="prompt" class="prompt">로딩 중...</h1>
         <div id="options" class="options"></div>
-        <p id="caption" class="caption">위로 넘기며 빠르게 맞혀봐.</p>
+        <p id="caption" class="caption">빠르게 정답을 선택하세요.</p>
+        <p id="rewardReason" class="reward-reason"></p>
       </section>
       <div id="feedbackLayer" class="feedback-layer" aria-hidden="true"></div>
 
       <section id="modeOverlay" class="mode-overlay">
         <div class="mode-hero">
-          <h1 class="hero-title">도파민 숏폼 영어!</h1>
-          <p class="hero-subtitle">오늘 몇 문제까지 뚫어볼래?</p>
+          <h1 class="hero-title">숏폼 영단어 훈련</h1>
+          <p class="hero-subtitle">몇 문제를 풀지 선택하세요.</p>
         </div>
         <div class="mode-panel">
           <div class="mode-buttons">
             <button class="mode-btn" type="button" data-limit="5">가볍게 5문제</button>
             <button class="mode-btn recommended" type="button" data-limit="10">집중 10문제</button>
             <button class="mode-btn" type="button" data-limit="15">몰입 15문제</button>
-            <button class="mode-btn" type="button" data-limit="inf">무한모드</button>
+            <button class="mode-btn" type="button" data-limit="inf">무한 모드</button>
           </div>
         </div>
       </section>
 
       <section id="resultOverlay" class="result-overlay hidden">
         <div class="mode-panel">
-          <p class="mode-title">퀴즈 완료!</p>
+          <p class="mode-title">퀴즈 완료</p>
           <p id="resultSummary" class="mode-subtitle">0문제 완료</p>
           <div class="mode-buttons">
-            <button id="retryBtn" class="mode-btn recommended" type="button">같은 모드 재도전</button>
-            <button id="chooseModeBtn" class="mode-btn" type="button">모드 고르기</button>
+            <button id="retryBtn" class="mode-btn recommended" type="button">같은 모드 다시</button>
+            <button id="chooseModeBtn" class="mode-btn" type="button">모드 선택</button>
           </div>
         </div>
       </section>
