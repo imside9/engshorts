@@ -73,7 +73,7 @@ const state = {
   recentBgIds: [],
   recentTypes: [],
   seenWordType: new Set(),
-  soundOn: false,
+  soundOn: true,
   feed: [],
   feedIndex: -1,
   isReviewMode: false,
@@ -166,6 +166,7 @@ init();
 async function init() {
   wireControls();
   wireGestureControls();
+  dom.soundToggle.textContent = state.soundOn ? "사운드 ON" : "사운드 OFF";
   setModeButtonsEnabled(false);
   setModeSubtitle("단어 데이터를 불러오는 중...");
   state.words = await loadWords();
