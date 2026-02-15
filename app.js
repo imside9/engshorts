@@ -1,4 +1,5 @@
 const CSV_FILE = "./중등_수능필수영단어_1800.csv";
+const CSV_FILE_FALLBACK = `./${encodeURIComponent("중등_수능필수영단어_1800.csv")}`;
 const QUIZ_TIME_LIMIT_MS = 10000;
 const RECENT_WORD_LIMIT = 30;
 const RECENT_BG_LIMIT = 10;
@@ -98,22 +99,43 @@ const state = {
 class SoundEngine {
   constructor() {
     this.ctx = null;
+    this.master = null;
   }
 
   ensureCtx() {
-    if (!this.ctx) this.ctx = new window.AudioContext();
+    const AudioCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtor) return null;
+    if (!this.ctx) {
+      this.ctx = new AudioCtor();
+      this.master = this.ctx.createGain();
+      this.master.gain.value = 0.22;
+      this.master.connect(this.ctx.destination);
+    }
     return this.ctx;
+  }
+
+  resume() {
+    const ctx = this.ensureCtx();
+    if (!ctx) return Promise.resolve(false);
+    if (ctx.state === "suspended") {
+      return ctx.resume().then(() => true).catch(() => false);
+    }
+    return Promise.resolve(true);
   }
 
   beep({ freq = 440, duration = 0.08, type = "sine", gain = 0.04, delay = 0 } = {}) {
     const ctx = this.ensureCtx();
+    if (!ctx || !this.master) return;
+    if (ctx.state === "suspended") {
+      ctx.resume().catch(() => {});
+    }
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
     osc.type = type;
     osc.frequency.value = freq;
     g.gain.value = gain;
     osc.connect(g);
-    g.connect(ctx.destination);
+    g.connect(this.master);
     const now = ctx.currentTime + delay;
     osc.start(now);
     g.gain.exponentialRampToValueAtTime(0.0001, now + duration);
@@ -156,7 +178,11 @@ function wireControls() {
   dom.soundToggle.addEventListener("click", () => {
     state.soundOn = !state.soundOn;
     dom.soundToggle.textContent = state.soundOn ? "사운드 ON" : "사운드 OFF";
-    if (state.soundOn) sound.play("SFX_REWARD");
+    if (state.soundOn) {
+      sound.resume().finally(() => {
+        sound.play("SFX_REWARD");
+      });
+    }
   });
 
   dom.modeButtons.forEach((btn) => {
@@ -299,16 +325,29 @@ function startSession(limit, label) {
 }
 
 async function loadWords() {
+  const candidates = [CSV_FILE, CSV_FILE_FALLBACK].filter((v, i, arr) => arr.indexOf(v) === i);
   try {
-    const bytes = await fetch(CSV_FILE).then((r) => r.arrayBuffer());
-    const text = decodeCsvText(bytes);
-    return parseCsv(text)
-      .filter((r) => r.Word && r.Meaning)
-      .map((r, idx) => ({
-        id: `${idx}-${r.Word.trim().toLowerCase()}`,
-        word: r.Word.trim(),
-        meaning: r.Meaning.trim(),
-      }));
+    for (const candidate of candidates) {
+      let bytes = null;
+      try {
+        const res = await fetch(candidate, { cache: "no-store" });
+        if (!res.ok) continue;
+        bytes = await res.arrayBuffer();
+      } catch (_err) {
+        continue;
+      }
+      if (!bytes) continue;
+      const text = decodeCsvText(bytes);
+      const rows = parseCsv(text)
+        .filter((r) => r.Word && r.Meaning)
+        .map((r, idx) => ({
+          id: `${idx}-${r.Word.trim().toLowerCase()}`,
+          word: r.Word.trim(),
+          meaning: r.Meaning.trim(),
+        }));
+      if (rows.length >= 8) return rows;
+    }
+    return [];
   } catch (_err) {
     return [];
   }

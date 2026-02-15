@@ -16,3 +16,7 @@ Original prompt: enshort app에 대한 수정사항 검토- 모바일에서 사�
 - Added test hooks: window.render_game_to_text and window.advanceTime(ms).
 - Verification: Playwright loop completed 4 iterations in headed mode, generated shot-0..3.png and state-0..3.json, no errors-*.json generated.
 - Update: Enforced 4 options for multiple-choice cards by changing EASY_BONUS and SPEED_PICK generation to 4 choices (1 correct + 3 distractors).
+- Bugfix: Improved initial load robustness by adding CSV fetch fallback path (encodeURIComponent filename) and no-store fetch mode.
+- Bugfix: Improved sound reliability on mobile by adding webkitAudioContext fallback and explicit esume() on sound toggle.
+- Validation: Mode select + sound toggle test returned 사운드 ON with no console errors.
+- Validation: Playwright run completed 2 iterations, generated shot-0..1.png and state-0..1.json with no errors-*.json.
