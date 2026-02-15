@@ -2,8 +2,6 @@ const CSV_FILE = "./중등_수능필수영단어_1800.csv";
 const QUIZ_TIME_LIMIT_MS = 10000;
 const RECENT_WORD_LIMIT = 30;
 const RECENT_BG_LIMIT = 10;
-const RECENT_VIDEO_LIMIT = 5;
-const REWARD_COOLDOWN = 5;
 const SWIPE_MIN_Y = 64;
 const SWIPE_AXIS_RATIO = 1.2;
 const SWIPE_COMMIT_RATIO = 0.22;
@@ -11,12 +9,10 @@ const SWIPE_VELOCITY_THRESHOLD = 0.65;
 const SWIPE_MAX_DRAG = 180;
 const SWIPE_ROTATE_MAX = 4;
 const SWIPE_RESTORE_MS = 220;
-const REWARD_XP_THRESHOLD = 10;
-const REWARD_CLIP_MIN_MS = 5000;
-const REWARD_CLIP_MAX_MS = 8000;
 const HARD_TYPES = new Set(["OX", "FILL_BLANK", "SPEED_PICK"]);
 
-const VIDEO_SOURCES = Array.from({ length: 18 }, (_, i) => `./assets/video/loop${String(i + 1).padStart(2, "0")}.mp4`);
+const COMBO_TIER_THRESHOLDS = [0, 3, 6];
+const COMBO_TIER_LABELS = ["CALM", "WARM", "BLAZE"];
 
 const TYPES = [
   "WORD_TO_MEANING",
@@ -34,15 +30,7 @@ const typeLabels = {
   FILL_BLANK: "빈칸 완성",
   EASY_BONUS: "보너스",
   SPEED_PICK: "스피드 선택",
-  REWARD: "보상",
 };
-
-const rewardMessages = [
-  "미쳤다, 감 왔다",
-  "연속 성공 중",
-  "리듬 탔다",
-  "지금 페이스 최고",
-];
 
 const dom = {
   app: document.getElementById("app"),
@@ -51,15 +39,13 @@ const dom = {
   options: document.getElementById("options"),
   typeLabel: document.getElementById("typeLabel"),
   caption: document.getElementById("caption"),
-  rewardReason: document.getElementById("rewardReason"),
   timerBar: document.getElementById("timerBar"),
   streakValue: document.getElementById("streakValue"),
   speedValue: document.getElementById("speedValue"),
-  rewardValue: document.getElementById("rewardValue"),
+  comboTierValue: document.getElementById("comboTierValue"),
   progressLabel: document.getElementById("progressLabel"),
   soundToggle: document.getElementById("soundToggle"),
   bgLayer: document.querySelector(".bg-layer"),
-  videoBg: document.getElementById("videoBg"),
   feedbackLayer: document.getElementById("feedbackLayer"),
   modeOverlay: document.getElementById("modeOverlay"),
   resultOverlay: document.getElementById("resultOverlay"),
@@ -73,8 +59,10 @@ const state = {
   words: [],
   cardCount: 0,
   streak: 0,
+  peakCombo: 0,
+  comboTier: 0,
+  peakTier: 0,
   challengeXp: 0,
-  rewardCount: 0,
   responseMs: [],
   lastCardStartedAt: 0,
   timerId: null,
@@ -83,13 +71,8 @@ const state = {
   recentWordIds: [],
   recentBgIds: [],
   recentTypes: [],
-  recentVideoSrcs: [],
-  rewardVault: [],
   seenWordType: new Set(),
-  nextRewardTarget: randomInt(3, 5),
-  lastRewardCardAt: -100,
   soundOn: false,
-  videoEnabled: false,
   feed: [],
   feedIndex: -1,
   isReviewMode: false,
@@ -107,8 +90,6 @@ const state = {
     velocityY: 0,
     pointerId: null,
   },
-  pendingRewardTrigger: null,
-  lastRewardReason: "",
   sessionLimit: null,
   selectedModeLabel: "무한모드",
   sessionActive: false,
@@ -167,14 +148,14 @@ async function init() {
     dom.prompt.textContent = "CSV 데이터가 부족해.";
     return;
   }
-  await tryEnableVideoBackground();
+  applyComboTheme(0, { burst: false });
   openModeOverlay();
 }
 
 function wireControls() {
   dom.soundToggle.addEventListener("click", () => {
     state.soundOn = !state.soundOn;
-    dom.soundToggle.textContent = state.soundOn ? "사운드 켬" : "사운드 끔";
+    dom.soundToggle.textContent = state.soundOn ? "사운드 ON" : "사운드 OFF";
     if (state.soundOn) sound.play("SFX_REWARD");
   });
 
@@ -299,21 +280,18 @@ function startSession(limit, label) {
   state.sessionActive = true;
   state.cardCount = 0;
   state.streak = 0;
+  state.peakCombo = 0;
+  state.comboTier = 0;
+  state.peakTier = 0;
   state.challengeXp = 0;
-  state.rewardCount = 0;
   state.responseMs = [];
   state.feed = [];
   state.feedIndex = -1;
   state.isReviewMode = false;
   state.recentWordIds = [];
   state.recentTypes = [];
-  state.rewardVault = [];
   state.seenWordType = new Set();
-  state.nextRewardTarget = randomInt(3, 5);
-  state.lastRewardCardAt = -100;
-  state.pendingRewardTrigger = null;
-  state.lastRewardReason = "";
-  if (dom.rewardReason) dom.rewardReason.textContent = "";
+  applyComboTheme(0, { burst: false });
   dom.modeOverlay.classList.add("hidden");
   dom.resultOverlay.classList.add("hidden");
   updateHud();
@@ -404,12 +382,6 @@ function goNextCard(direction = "up") {
   }
 
   state.isReviewMode = false;
-  const rewardTrigger = shouldTriggerReward();
-  if (rewardTrigger) {
-    renderRewardCard(direction, rewardTrigger);
-    return;
-  }
-
   const question = buildQuestion();
   state.question = question;
   state.feed.push(question);
@@ -431,45 +403,6 @@ function goPrevCard(direction = "down") {
   state.question = state.feed[state.feedIndex];
   state.isReviewMode = true;
   renderQuestion(state.question, { direction, reviewMode: true });
-}
-
-function shouldTriggerReward() {
-  const cardsSinceReward = state.cardCount - state.lastRewardCardAt;
-  if (cardsSinceReward < REWARD_COOLDOWN) return false;
-  const byStreak = state.streak >= state.nextRewardTarget;
-  const byChallenge = state.challengeXp >= REWARD_XP_THRESHOLD;
-  const guaranteed = state.cardCount > 0 && state.cardCount % 10 === 0;
-  if (!byStreak && !byChallenge && !guaranteed) return null;
-  if (byChallenge && byStreak) return { reason: "Hard + combo clear", key: "challenge_combo" };
-  if (byChallenge) return { reason: "Hard clear chain", key: "challenge" };
-  if (byStreak) return { reason: "Combo streak reward", key: "streak" };
-  return { reason: "Milestone reward", key: "milestone" };
-}
-
-function renderRewardCard(direction, trigger = null) {
-  const chosenTrigger = trigger || { reason: "Reward unlocked", key: "fallback" };
-  state.rewardCount += 1;
-  state.lastRewardCardAt = state.cardCount;
-  state.challengeXp = 0;
-  state.nextRewardTarget = state.streak + randomInt(3, 5);
-  state.pendingRewardTrigger = chosenTrigger;
-  state.lastRewardReason = chosenTrigger.reason;
-  sound.play("SFX_REWARD");
-  applyVisualBackground(true);
-  const clip = unlockRewardClip();
-  const durationMs = randomInt(REWARD_CLIP_MIN_MS, REWARD_CLIP_MAX_MS);
-  dom.typeLabel.textContent = typeLabels.REWARD;
-  dom.prompt.innerHTML = `<div class="reward-card"><div class="reward-main">${state.streak}연속 성공!</div><div class="reward-sub">${pickOne(rewardMessages)}</div><div class="reward-sub reward-why">Unlocked: ${clip.label}</div></div>`;
-  dom.options.innerHTML = "";
-  dom.caption.textContent = `보상 사유: ${chosenTrigger.reason}`;
-  if (dom.rewardReason) dom.rewardReason.textContent = `${chosenTrigger.reason} · ${Math.round(durationMs / 1000)}s clip`;
-  updateHud();
-  animateIn(direction);
-  state.locked = true;
-  window.setTimeout(() => {
-    state.locked = false;
-    goNextCard("up");
-  }, durationMs);
 }
 
 function buildQuestion() {
@@ -531,13 +464,13 @@ function buildQuestion() {
   }
 
   if (type === "EASY_BONUS") {
-    const wrong = pickOne(distractors);
+    const wrongs = distractors.slice(0, 3).map((x) => x.meaning);
     return {
       type,
       wordId: base.id,
       answer: base.meaning,
       prompt: `보너스 문제: ${base.word}`,
-      options: shuffle([base.meaning, wrong.meaning]),
+      options: shuffle([base.meaning, ...wrongs]),
       timeLimitMs: QUIZ_TIME_LIMIT_MS,
       caption: "맞히면 연속 카운트 보너스!",
       bonusMultiplier: 2,
@@ -549,7 +482,7 @@ function buildQuestion() {
     wordId: base.id,
     answer: base.word,
     prompt: `${base.meaning}`,
-    options: shuffle([base.word, ...distractors.slice(0, 5).map((x) => x.word)]),
+    options: shuffle([base.word, ...distractors.slice(0, 3).map((x) => x.word)]),
     timeLimitMs: QUIZ_TIME_LIMIT_MS,
     caption: "여러 단어 중 정답을 빨리 골라.",
     bonusMultiplier: 1,
@@ -588,7 +521,7 @@ function pickDistinctWords(count, excludedIds = []) {
 }
 
 function renderQuestion(q, { direction, reviewMode }) {
-  applyVisualBackground(false);
+  applyVisualBackground();
   dom.typeLabel.textContent = reviewMode ? `${typeLabels[q.type]} / 복습` : typeLabels[q.type];
   dom.prompt.textContent = q.prompt;
   dom.caption.textContent = reviewMode ? "복습 모드(기록 반영 안 됨)." : q.caption;
@@ -614,11 +547,11 @@ function submitAnswer(value) {
 
   if (state.isReviewMode) {
     if (correct) {
-      showComboFeedback(Math.max(state.streak, 1));
-      sound.play("SFX_CORRECT");
+      showComboFeedback(Math.max(state.streak, 1), state.comboTier, false);
+      playComboTierSfx(state.comboTier, "correct");
     } else {
-      showMissFeedback();
-      sound.play("SFX_WRONG");
+      showMissFeedback(false);
+      playComboTierSfx(state.comboTier, "wrong");
     }
     window.setTimeout(() => {
       state.locked = false;
@@ -626,31 +559,40 @@ function submitAnswer(value) {
     return;
   }
 
-  finishLiveCard(correct, q, correct ? "SFX_CORRECT" : "SFX_WRONG");
+  finishLiveCard(correct, q);
 }
 
 function handleTimeout() {
   if (state.locked || !state.question || state.isReviewMode) return;
   state.locked = true;
-  finishLiveCard(false, state.question, "SFX_TIMEOUT");
+  finishLiveCard(false, state.question);
 }
 
-function finishLiveCard(correct, q, sfx) {
+function finishLiveCard(correct, q) {
+  const prevTier = state.comboTier;
   const elapsed = performance.now() - state.lastCardStartedAt;
   state.responseMs.push(elapsed);
-  sound.play(sfx);
 
   if (correct) {
     state.challengeXp += scoreChallenge(q, elapsed);
     state.streak += q.bonusMultiplier === 2 ? 2 : 1;
+    state.peakCombo = Math.max(state.peakCombo, state.streak);
+    state.comboTier = computeComboTier(state.streak);
+    state.peakTier = Math.max(state.peakTier, state.comboTier);
     dom.card.classList.add("correct");
-    showComboFeedback(state.streak);
-    spawnParticles();
+    const tierUp = state.comboTier > prevTier;
+    showComboFeedback(state.streak, state.comboTier, tierUp);
+    spawnParticles(state.comboTier);
+    playComboTierSfx(state.comboTier, tierUp ? "tier_up" : "correct");
+    applyComboTheme(state.comboTier, { burst: tierUp });
   } else {
     state.streak = 0;
     state.challengeXp = Math.max(0, state.challengeXp - 1);
+    state.comboTier = computeComboTier(0);
     dom.card.classList.add("wrong");
-    showMissFeedback();
+    showMissFeedback(prevTier > 0);
+    playComboTierSfx(prevTier, "wrong");
+    applyComboTheme(state.comboTier, { burst: false });
   }
 
   state.cardCount += 1;
@@ -678,18 +620,19 @@ function finishLiveCard(correct, q, sfx) {
   }, 620);
 }
 
-function showComboFeedback(streak) {
+function showComboFeedback(streak, tier, tierUp) {
   const el = document.createElement("div");
   el.className = "feedback-pop combo";
-  el.textContent = `COMBO x${streak}`;
+  const tierLabel = COMBO_TIER_LABELS[tier];
+  el.textContent = tierUp ? `${tierLabel} UP! · COMBO x${streak}` : `COMBO x${streak}`;
   dom.feedbackLayer.appendChild(el);
   window.setTimeout(() => el.remove(), 1800);
 }
 
-function showMissFeedback() {
+function showMissFeedback(hadTier) {
   const pop = document.createElement("div");
   pop.className = "feedback-pop miss";
-  pop.textContent = "MISS";
+  pop.textContent = hadTier ? "BREAK" : "MISS";
   const flash = document.createElement("div");
   flash.className = "impact-flash";
   dom.feedbackLayer.appendChild(flash);
@@ -700,13 +643,14 @@ function showMissFeedback() {
   }, 1200);
 }
 
-function spawnParticles() {
+function spawnParticles(tier = 0) {
   const cx = window.innerWidth * 0.5;
   const cy = window.innerHeight * 0.42;
-  for (let i = 0; i < 10; i += 1) {
+  const count = tier >= 2 ? 18 : tier >= 1 ? 14 : 10;
+  for (let i = 0; i < count; i += 1) {
     const p = document.createElement("div");
-    const angle = (Math.PI * 2 * i) / 10;
-    const dist = 70 + Math.random() * 42;
+    const angle = (Math.PI * 2 * i) / count;
+    const dist = 70 + Math.random() * (tier >= 2 ? 90 : tier >= 1 ? 65 : 42);
     p.className = "burst-particle";
     p.style.left = `${cx}px`;
     p.style.top = `${cy}px`;
@@ -726,8 +670,7 @@ function pulseNoHistory() {
 
 function updateHud() {
   dom.streakValue.textContent = String(state.streak);
-  dom.rewardValue.textContent = String(state.rewardCount);
-  if (dom.rewardReason && !state.locked) dom.rewardReason.textContent = "";
+  dom.comboTierValue.textContent = COMBO_TIER_LABELS[state.comboTier];
   const max = state.sessionLimit == null ? "∞" : String(state.sessionLimit);
   dom.progressLabel.textContent = `${state.cardCount} / ${max}`;
   const avg = state.responseMs.length
@@ -744,10 +687,11 @@ function endSession() {
   resetTimer();
   state.sessionActive = false;
   state.locked = false;
+  applyComboTheme(0, { burst: false });
   const avg = state.responseMs.length
     ? (state.responseMs.reduce((a, b) => a + b, 0) / state.responseMs.length / 1000).toFixed(2)
     : "0.00";
-  dom.resultSummary.textContent = `${state.cardCount}문제 완료 · 평균 ${avg}초 · 보상 ${state.rewardCount}회`;
+  dom.resultSummary.textContent = `${state.cardCount}문제 완료 · 평균 ${avg}초 · 최고 콤보 x${state.peakCombo} · 최고 ${COMBO_TIER_LABELS[state.peakTier]}`;
   dom.resultOverlay.classList.remove("hidden");
 }
 
@@ -775,78 +719,54 @@ function resetTimer() {
   dom.timerBar.style.transform = "scaleX(1)";
 }
 
-async function tryEnableVideoBackground() {
-  dom.videoBg.muted = true;
-  dom.videoBg.defaultMuted = true;
-  dom.videoBg.playsInline = true;
-  dom.videoBg.autoplay = true;
-  dom.videoBg.style.display = "block";
-
-  for (let i = 0; i < Math.min(4, VIDEO_SOURCES.length); i += 1) {
-    const source = pickVideoSource();
-    if (!source) break;
-    const ok = await tryLoadVideo(source);
-    if (ok) {
-      state.videoEnabled = true;
-      return;
-    }
-  }
-  state.videoEnabled = false;
-  dom.videoBg.style.display = "none";
-}
-
-function applyVisualBackground(forceRotateVideo) {
+function applyVisualBackground() {
   const bg = pickBackground();
   dom.bgLayer.style.background = bg.value;
-  dom.bgLayer.style.opacity = state.videoEnabled ? "0.34" : "1";
-  if (!state.videoEnabled) return;
-  if (!forceRotateVideo && state.cardCount % 4 !== 0) return;
-  rotateVideoSource();
 }
 
-async function rotateVideoSource() {
-  const src = pickVideoSource();
-  if (!src) return;
-  await tryLoadVideo(src);
+function computeComboTier(streak) {
+  if (streak >= COMBO_TIER_THRESHOLDS[2]) return 2;
+  if (streak >= COMBO_TIER_THRESHOLDS[1]) return 1;
+  return 0;
 }
 
-function pickVideoSource() {
-  const candidates = VIDEO_SOURCES.filter((src) => !state.recentVideoSrcs.includes(src));
-  const chosen = candidates.length ? pickOne(candidates) : pickOne(VIDEO_SOURCES);
-  if (!chosen) return null;
-  state.recentVideoSrcs.push(chosen);
-  trimQueue(state.recentVideoSrcs, RECENT_VIDEO_LIMIT);
-  return chosen;
+function applyComboTheme(tier, { burst = false } = {}) {
+  const energy = tier === 2 ? 1 : tier === 1 ? 0.6 : 0.18;
+  dom.app.style.setProperty("--energy", String(energy));
+  dom.app.classList.remove("tier-calm", "tier-warm", "tier-blaze", "tier-burst");
+  dom.app.classList.add(tier === 2 ? "tier-blaze" : tier === 1 ? "tier-warm" : "tier-calm");
+  if (!burst) return;
+  dom.app.classList.add("tier-burst");
+  window.setTimeout(() => dom.app.classList.remove("tier-burst"), 340);
 }
 
-function tryLoadVideo(src) {
-  return new Promise((resolve) => {
-    const video = dom.videoBg;
-    video.muted = true;
-    video.defaultMuted = true;
-    let done = false;
-    const finish = (ok) => {
-      if (done) return;
-      done = true;
-      video.removeEventListener("canplay", onReady);
-      video.removeEventListener("loadeddata", onReady);
-      video.removeEventListener("error", onError);
-      resolve(ok);
-    };
-    const onReady = async () => {
-      try {
-        await video.play();
-      } catch (_err) {}
-      finish(true);
-    };
-    const onError = () => finish(false);
-    video.addEventListener("loadeddata", onReady, { once: true });
-    video.addEventListener("canplay", onReady, { once: true });
-    video.addEventListener("error", onError, { once: true });
-    video.src = src;
-    video.load();
-    window.setTimeout(() => finish(false), 5000);
-  });
+function playComboTierSfx(tier, event) {
+  if (!state.soundOn) return;
+  if (event === "wrong") {
+    sound.play("SFX_WRONG");
+    return;
+  }
+  if (event === "tier_up") {
+    if (tier === 2) {
+      sound.beep({ freq: 620, duration: 0.08, type: "square", gain: 0.045 });
+      sound.beep({ freq: 880, duration: 0.08, type: "triangle", gain: 0.04, delay: 0.05 });
+      sound.beep({ freq: 1180, duration: 0.1, type: "triangle", gain: 0.035, delay: 0.1 });
+    } else {
+      sound.play("SFX_REWARD");
+    }
+    return;
+  }
+  if (tier === 2) {
+    sound.beep({ freq: 700, duration: 0.07, type: "triangle", gain: 0.038 });
+    sound.beep({ freq: 930, duration: 0.08, type: "triangle", gain: 0.03, delay: 0.04 });
+    return;
+  }
+  if (tier === 1) {
+    sound.beep({ freq: 640, duration: 0.07, type: "triangle", gain: 0.034 });
+    sound.beep({ freq: 820, duration: 0.07, type: "triangle", gain: 0.028, delay: 0.045 });
+    return;
+  }
+  sound.play("SFX_CORRECT");
 }
 
 function pickBackground() {
@@ -898,14 +818,6 @@ function scoreChallenge(question, elapsedMs) {
   return xp;
 }
 
-function unlockRewardClip() {
-  const unopened = VIDEO_SOURCES.filter((src) => !state.rewardVault.includes(src));
-  const chosen = unopened.length ? pickOne(unopened) : pickOne(VIDEO_SOURCES);
-  if (chosen && !state.rewardVault.includes(chosen)) state.rewardVault.push(chosen);
-  const idx = Math.max(1, state.rewardVault.length);
-  return { src: chosen, label: `Cat Clip #${idx}` };
-}
-
 function applyDragTransform(rawDy) {
   const dy = Math.max(-SWIPE_MAX_DRAG, Math.min(SWIPE_MAX_DRAG, rawDy));
   const ratio = Math.max(-1, Math.min(1, dy / SWIPE_MAX_DRAG));
@@ -950,3 +862,39 @@ function pickOne(items) {
 function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
+
+function renderGameToText() {
+  const max = state.sessionLimit == null ? "infinite" : state.sessionLimit;
+  const payload = {
+    note: "No coordinates; quiz card UI state only.",
+    mode: {
+      sessionActive: state.sessionActive,
+      reviewMode: state.isReviewMode,
+      overlay: !dom.modeOverlay.classList.contains("hidden") ? "mode" : !dom.resultOverlay.classList.contains("hidden") ? "result" : "play",
+    },
+    progress: {
+      cardCount: state.cardCount,
+      sessionLimit: max,
+      streak: state.streak,
+      comboTier: COMBO_TIER_LABELS[state.comboTier],
+      peakCombo: state.peakCombo,
+    },
+    question: state.question
+      ? {
+          type: state.question.type,
+          prompt: state.question.prompt,
+          options: state.question.options,
+          caption: state.question.caption,
+          timeLimitMs: state.question.timeLimitMs,
+        }
+      : null,
+  };
+  return JSON.stringify(payload);
+}
+
+async function advanceTime(ms) {
+  await new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+window.render_game_to_text = renderGameToText;
+window.advanceTime = advanceTime;

@@ -8,4 +8,11 @@ Original prompt: enshort app에 대한 수정사항 검토- 모바일에서 사�
 - Secondary blocker: page.screenshot timeout occurred in headless mode.
 - Resolution: Switched test run to headed mode (--headless false) and confirmed stable screenshot capture.
 - Fix applied: Added <link rel="icon" href="data:," /> in index.html to avoid 404 console error that prematurely stops the loop.
-- Verification: Playwright client completed 3 iterations and generated output/web-game/shot-0.png..shot-2.png with no errors-*.json.
+- Verification: Playwright client completed 3 iterations and generated output/web-game/shot-0.png..shot-2.png with no errors-*.json.- Policy update: Removed video-based reward system entirely (no unlock/watch flow).
+- Implemented combo escalation loop: CALM -> WARM -> BLAZE tiers based on streak thresholds (3, 6).
+- Replaced reward HUD with energy tier badge (E CALM/WARM/BLAZE) and added peak combo/tier session metrics.
+- Added escalating UI intensity via CSS energy variable and tier classes (	ier-calm, 	ier-warm, 	ier-blaze, burst effect on tier-up).
+- Added tier-aware SFX layering (correct/tier-up/wrong) to reinforce progression and break states.
+- Added test hooks: window.render_game_to_text and window.advanceTime(ms).
+- Verification: Playwright loop completed 4 iterations in headed mode, generated shot-0..3.png and state-0..3.json, no errors-*.json generated.
+- Update: Enforced 4 options for multiple-choice cards by changing EASY_BONUS and SPEED_PICK generation to 4 choices (1 correct + 3 distractors).

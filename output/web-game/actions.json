@@ -1,1 +1,1 @@
-{"steps":[{"buttons":[],"frames":6}]}
+{"steps":[{"buttons":[],"frames":10},{"buttons":["left_mouse_button"],"frames":2,"mouse_x":250,"mouse_y":390},{"buttons":[],"frames":8},{"buttons":["left_mouse_button"],"frames":2,"mouse_x":560,"mouse_y":390},{"buttons":[],"frames":8},{"buttons":["left_mouse_button"],"frames":2,"mouse_x":250,"mouse_y":452},{"buttons":[],"frames":8},{"buttons":["left_mouse_button"],"frames":2,"mouse_x":560,"mouse_y":452},{"buttons":[],"frames":12}]}

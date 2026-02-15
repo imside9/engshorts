@@ -9,7 +9,6 @@
   </head>
   <body>
     <main id="app" class="app">
-      <video id="videoBg" class="video-bg" autoplay muted loop playsinline preload="metadata"></video>
       <div class="bg-layer"></div>
       <div class="noise-layer"></div>
       <div class="vignette-layer"></div>
@@ -24,7 +23,7 @@
       <aside class="side-ui" aria-label="상태">
         <div class="side-item"><span class="icon">S</span><span id="streakValue">0</span></div>
         <div class="side-item"><span class="icon">T</span><span id="speedValue">0.00s</span></div>
-        <div class="side-item"><span class="icon">R</span><span id="rewardValue">0</span></div>
+        <div class="side-item"><span class="icon">E</span><span id="comboTierValue">CALM</span></div>
         <button id="soundToggle" class="sound-btn" type="button">사운드 OFF</button>
       </aside>
 
@@ -33,7 +32,6 @@
         <h1 id="prompt" class="prompt">로딩 중...</h1>
         <div id="options" class="options"></div>
         <p id="caption" class="caption">빠르게 정답을 선택하세요.</p>
-        <p id="rewardReason" class="reward-reason"></p>
       </section>
       <div id="feedbackLayer" class="feedback-layer" aria-hidden="true"></div>
 
